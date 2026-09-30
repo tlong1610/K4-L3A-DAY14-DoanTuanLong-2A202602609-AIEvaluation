@@ -245,25 +245,40 @@ class TextGenerator(Protocol):
 class OpenAIGenerator:
     def __init__(self, max_output_tokens: int = 300) -> None:
         api_key = os.getenv("OPENAI_API_KEY", "").strip()
+        base_url = os.getenv("OPENAI_BASE_URL", "").strip()
         self.model = os.getenv("OPENAI_MODEL", "").strip()
         if not api_key:
             raise RuntimeError("OPENAI_API_KEY is missing from .env")
         if not self.model:
             raise RuntimeError("OPENAI_MODEL is missing from .env")
-        self.client = OpenAI(api_key=api_key)
+        
+        client_kwargs = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+            
+        self.client = OpenAI(**client_kwargs)
         self.max_output_tokens = max_output_tokens
 
     def generate(self, prompt: str) -> str:
-        response = self.client.responses.create(
-            model=self.model,
-            input=prompt,
-            temperature=0,
-            max_output_tokens=self.max_output_tokens,
-        )
-        answer = response.output_text.strip()
-        if not answer:
-            raise RuntimeError("OpenAI returned an empty answer")
-        return answer
+        import time
+        max_retries = 3
+        time.sleep(4.5)  # Stay below 15 RPM (max 13 requests/min)
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0,
+                    max_tokens=self.max_output_tokens,
+                )
+                answer = response.choices[0].message.content.strip() if response.choices and response.choices[0].message.content else ""
+                if not answer:
+                    raise RuntimeError("OpenAI returned an empty answer")
+                return answer
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise e
+                time.sleep(2 ** attempt)  # Exponential backoff
 
 
 @dataclass(frozen=True)
